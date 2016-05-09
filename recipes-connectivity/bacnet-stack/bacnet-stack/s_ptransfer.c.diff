@@ -1,0 +1,17 @@
+diff --git a/demo/handler/s_ptransfer.c b/demo/handler/s_ptransfer.c
+index 0720120..66a3236 100644
+--- a/demo/handler/s_ptransfer.c
++++ b/demo/handler/s_ptransfer.c
+@@ -46,6 +46,12 @@
+ #include "client.h"
+ 
+ /** @file s_ptransfer.c  Send a Private Transfer request. */
++uint8_t Send_Private_Transfer_Request(
++    uint32_t device_id,
++    uint16_t vendor_id,
++    uint32_t service_number,
++    char block_number,
++    DATABLOCK * block);
+ 
+ uint8_t Send_Private_Transfer_Request(
+     uint32_t device_id,

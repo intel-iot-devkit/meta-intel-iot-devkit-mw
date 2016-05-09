@@ -1,0 +1,8 @@
+# short-description: Create the iot-devkit disk image
+# long-description: Creates the partitioned disk image that the user
+# can directly dd to the sdcard.
+
+part /boot --source iot-devkit --size 50 --ondisk mmcblkp0 --fstype=msdos --label msdos --active --align 1024
+
+# this assumes that your SD card is 1GB+
+part / --source rootfs --size 1000 --ondisk mmcblkp0 --fstype=ext3 --label platform --align 1024

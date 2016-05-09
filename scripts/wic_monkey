@@ -1,0 +1,321 @@
+#!/usr/bin/env python
+# ex:ts=4:sw=4:sts=4:et
+# -*- tab-width: 4; c-basic-offset: 4; indent-tabs-mode: nil -*-
+#
+# Copyright (c) 2013, Intel Corporation.
+# All rights reserved.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License version 2 as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along
+# with this program; if not, write to the Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+#
+# DESCRIPTION 'wic' is the OpenEmbedded Image Creator that users can
+# use to generate bootable images.  Invoking it without any arguments
+# will display help screens for the 'wic' command and list the
+# available 'wic' subcommands.  Invoking a subcommand without any
+# arguments will likewise display help screens for the specified
+# subcommand.  Please use that interface for detailed help.
+#
+# AUTHORS
+# Tom Zanussi <tom.zanussi (at] linux.intel.com>
+#
+
+__version__ = "0.1.0"
+
+# Python Standard Library modules
+import os
+import sys
+import optparse
+import logging
+
+# Wic is not a .py so we can't just 'import' it
+wic_script = os.path.abspath(os.path.dirname(os.path.abspath(sys.argv[0]))) + '/../../scripts/wic'
+wic_file = file(wic_script)
+wic_original = wic_file.read()
+# rename wic_create_subcommand so it doesn't override our func
+wic_original = wic_original.replace("def wic_create_subcommand","def __nothing__")
+
+# Modules should be loaded from our current scripts dir too
+monkey_curr_path = os.path.abspath(os.path.dirname(os.path.abspath(sys.argv[0])))
+monkey_scripts_path = monkey_curr_path + '/../../scripts'
+sys.path = sys.path + [monkey_scripts_path + '/lib'] + [monkey_curr_path + '/lib']
+
+# load wic libs early
+import wic.utils.partitionedfs
+from image.help import *
+from image.engine import *
+from wic.plugin import pluginmgr
+import wic.conf
+import wic.creator
+
+def newcreate(self, *args, **kwargs):
+    pluginmgr._add_plugindir(monkey_scripts_path + '/lib/wic/plugins/imager')
+    pluginmgr._add_plugindir(monkey_scripts_path + '/lib/wic/plugins/source')
+    pluginmgr.append_dirs(scripts_path + '/lib/wic/plugins/')
+    pluginmgr._load_all()
+    cmdln.Cmdln.__init__(self, *args, **kwargs)
+    self._subcmds = []
+    pluginmgr.get_plugins('imager')
+
+    # get cmds from pluginmgr
+    # mix-in do_subcmd interface
+    for subcmd, klass in pluginmgr.get_plugins('imager').iteritems():
+        if not hasattr(klass, 'do_create'):
+            msger.warning("Unsurpport subcmd: %s" % subcmd)
+            continue
+
+        func = getattr(klass, 'do_create')
+        setattr(self.__class__, "do_"+subcmd, func)
+        self._subcmds.append(subcmd)
+
+# replace constructor with one that will go look in local 'scripts' dir too
+wic.creator.Creator.__init__ = newcreate
+
+def newformatdisks(self):
+    self.layout_partitions()
+
+    if self.skipformat:
+        msger.debug("Skipping disk format, because skipformat flag is set.")
+        return
+
+    for dev in self.disks.keys():
+        d = self.disks[dev]
+        msger.debug("Initializing partition table for %s" % \
+                    (d['disk'].device))
+        self._PartitionedMount__run_parted(["-s", d['disk'].device, "mklabel",
+                           d['ptable_format']])
+
+    msger.debug("Creating partitions")
+
+    for p in self.partitions:
+        d = self.disks[p['disk_name']]
+        if d['ptable_format'] == "msdos" and p['num'] == 5:
+            # The last sector of the 3rd partition was reserved for the EBR
+            # of the first _logical_ partition. This is why the extended
+            # partition should start one sector before the first logical
+            # partition.
+            self._PartitionedMount__create_partition(d['disk'].device, "extended",
+                                    None, p['start'] - 1,
+                                    d['offset'] - p['start'])
+
+        if p['fstype'] == "swap":
+            parted_fs_type = "linux-swap"
+        elif p['fstype'] == "vfat":
+            parted_fs_type = "fat32"
+        elif p['fstype'] == "msdos":
+            parted_fs_type = "fat16"
+        else:
+            # Type for ext2/ext3/ext4/btrfs
+            parted_fs_type = "ext2"
+
+        # Boot ROM of OMAP boards require vfat boot partition to have an
+        # even number of sectors.
+        if p['mountpoint'] == "/boot" and p['fstype'] in ["vfat", "msdos"] \
+           and p['size'] % 2:
+            msger.debug("Substracting one sector from '%s' partition to " \
+                        "get even number of sectors for the partition" % \
+                        p['mountpoint'])
+            p['size'] -= 1
+
+        self._PartitionedMount__create_partition(d['disk'].device, p['type'],
+                                parted_fs_type, p['start'], p['size'])
+
+        if p['boot']:
+            if d['ptable_format'] == 'gpt':
+                flag_name = "legacy_boot"
+            else:
+                flag_name = "boot"
+            msger.debug("Set '%s' flag for partition '%s' on disk '%s'" % \
+                        (flag_name, p['num'], d['disk'].device))
+            self._PartitionedMount__run_parted(["-s", d['disk'].device, "set",
+                               "%d" % p['num'], flag_name, "on"])
+
+        # Parted defaults to enabling the lba flag for fat16 partitions,
+        # which causes compatibility issues with some firmware (and really
+        # isn't necessary).
+        if parted_fs_type == "fat16":
+            if d['ptable_format'] == 'msdos':
+                msger.debug("Disable 'lba' flag for partition '%s' on disk '%s'" % \
+                            (p['num'], d['disk'].device))
+                self._PartitionedMount__run_parted(["-s", d['disk'].device, "set",
+                                   "%d" % p['num'], "lba", "off"])
+                # hack to change the partition type to W95 FAT32 (0x0b)
+                print "Using sfdisk to change the partition id on " + d['disk'].device
+                # note that fat partition is first so partition id is not required
+                os.system("sfdisk --id " + d['disk'].device + " 1 b")
+
+
+    # If the partition table format is "gpt", find out PARTUUIDs for all
+    # the partitions. And if users specified custom parition type UUIDs,
+    # set them.
+    for disk_name, disk in self.disks.items():
+        if disk['ptable_format'] != 'gpt':
+            continue
+
+        pnum = 0
+        gpt_parser = GptParser(d['disk'].device, SECTOR_SIZE)
+        # Iterate over all GPT partitions on this disk
+        for entry in gpt_parser.get_partitions():
+            pnum += 1
+            # Find the matching partition in the 'self.partitions' list
+            for n in d['partitions']:
+                p = self.partitions[n]
+                if p['num'] == pnum:
+                    # Found, fetch PARTUUID (partition's unique ID)
+                    p['partuuid'] = entry['part_uuid']
+                    msger.debug("PARTUUID for partition %d on disk '%s' " \
+                                "(mount point '%s') is '%s'" % (pnum, \
+                                disk_name, p['mountpoint'], p['partuuid']))
+                    if p['part_type']:
+                        entry['type_uuid'] = p['part_type']
+                        msger.debug("Change type of partition %d on disk " \
+                                    "'%s' (mount point '%s') to '%s'" % \
+                                    (pnum, disk_name, p['mountpoint'],
+                                     p['part_type']))
+                        gpt_parser.change_partition(entry)
+
+        del gpt_parser
+
+# function will use sfdisk to change parition id on vfat part type
+#wic.utils.partitionedfs.PartitionedMount._PartitionedMount__format_disks = newformatdisks
+
+# function will load wks file if full path is given
+def wic_create_subcommand(args, usage_str):
+    """
+    Command-line handling for image creation.  The real work is done
+    by image.engine.wic_create()
+    """
+    parser = optparse.OptionParser(usage = usage_str)
+
+    parser.add_option("-o", "--outdir", dest = "outdir",
+                      action = "store", help = "name of directory to create image in")
+    parser.add_option("-i", "--infile", dest = "properties_file",
+                      action = "store", help = "name of file containing the values for image properties as a JSON file")
+    parser.add_option("-e", "--image-name", dest = "image_name",
+                      action = "store", help = "name of the image to use the artifacts from e.g. core-image-sato")
+    parser.add_option("-r", "--rootfs-dir", dest = "rootfs_dir",
+                      action = "callback", callback = callback_rootfs_dir, type = "string",
+                      help = "path to the /rootfs dir to use as the .wks rootfs source")
+    parser.add_option("-b", "--bootimg-dir", dest = "bootimg_dir",
+                      action = "store", help = "path to the dir containing the boot artifacts (e.g. /EFI or /syslinux dirs) to use as the .wks bootimg source")
+    parser.add_option("-k", "--kernel-dir", dest = "kernel_dir",
+                      action = "store", help = "path to the dir containing the kernel to use in the .wks bootimg")
+    parser.add_option("-n", "--native-sysroot", dest = "native_sysroot",
+                      action = "store", help = "path to the native sysroot containing the tools to use to build the image")
+    parser.add_option("-p", "--skip-build-check", dest = "build_check",
+                      action = "store_false", default = True, help = "skip the build check")
+    parser.add_option("-D", "--debug", dest = "debug", action = "store_true",
+                      default = False, help = "output debug information")
+
+    (options, args) = parser.parse_args(args)
+
+    if len(args) != 1:
+        logging.error("Wrong number of arguments, exiting\n")
+        parser.print_help()
+        sys.exit(1)
+
+    if not options.image_name and not (options.rootfs_dir and
+                                       options.bootimg_dir and
+                                       options.kernel_dir and
+                                       options.native_sysroot):
+        print "Build artifacts not completely specified, exiting."
+        print "  (Use 'wic -e' or 'wic -r -b -k -n' to specify artifacts)"
+        sys.exit(1)
+
+    if not options.image_name:
+        options.build_check = False
+
+    if options.build_check and not options.properties_file:
+        print "Checking basic build environment..."
+        if not verify_build_env():
+            print "Couldn't verify build environment, exiting\n"
+            sys.exit(1)
+        else:
+            print "Done.\n"
+
+    print "Creating image(s)...\n"
+
+    bootimg_dir = staging_data_dir = hdddir = ""
+
+    if options.image_name:
+        bitbake_env_lines = find_bitbake_env_lines(options.image_name)
+        if not bitbake_env_lines:
+            print "Couldn't get bitbake environment, exiting."
+            sys.exit(1)
+        set_bitbake_env_lines(bitbake_env_lines)
+    if options.image_name:
+        (rootfs_dir, kernel_dir, bootimg_dir, native_sysroot) = \
+            find_artifacts(options.image_name)
+    bootimg_dir = get_bitbake_var("DEPLOY_DIR_IMAGE")
+
+    wks_file = args[0]
+
+    if not wks_file.endswith(".wks"):
+        wks_file = find_canned_image(scripts_path, wks_file)
+        if not wks_file:
+            print "No image named %s found, exiting.  (Use 'wic list images' to list available images, or specify a fully-qualified OE kickstart (.wks) filename)\n" % wks_file
+            sys.exit(1)
+
+    image_output_dir = ""
+    if options.outdir:
+        image_output_dir = options.outdir
+
+    if not options.image_name:
+        rootfs_dir = ''
+        if 'ROOTFS_DIR' in options.rootfs_dir:
+            rootfs_dir = options.rootfs_dir['ROOTFS_DIR']
+        bootimg_dir = options.bootimg_dir
+        kernel_dir = options.kernel_dir
+        native_sysroot = options.native_sysroot
+        if rootfs_dir and not os.path.isdir(rootfs_dir):
+            print "--roofs-dir (-r) not found, exiting\n"
+            sys.exit(1)
+        if not os.path.isdir(bootimg_dir):
+            print "--bootimg-dir (-b) not found, exiting\n"
+            sys.exit(1)
+        if not os.path.isdir(kernel_dir):
+            print "--kernel-dir (-k) not found, exiting\n"
+            sys.exit(1)
+        if not os.path.isdir(native_sysroot):
+            print "--native-sysroot (-n) not found, exiting\n"
+            sys.exit(1)
+    else:
+        not_found = not_found_dir = ""
+        if not os.path.isdir(rootfs_dir):
+            (not_found, not_found_dir) = ("rootfs-dir", rootfs_dir)
+        elif not os.path.isdir(kernel_dir):
+            (not_found, not_found_dir) = ("kernel-dir", kernel_dir)
+        elif not os.path.isdir(native_sysroot):
+            (not_found, not_found_dir) = ("native-sysroot", native_sysroot)
+        if not_found:
+            if not not_found_dir:
+                not_found_dir = "Completely missing artifact - wrong image (.wks) used?"
+            print "Build artifacts not found, exiting."
+            print "  (Please check that the build artifacts for the machine"
+            print "   selected in local.conf actually exist and that they"
+            print "   are the correct artifacts for the image (.wks file)).\n"
+            print "The artifact that couldn't be found was %s:\n  %s" % \
+                (not_found, not_found_dir)
+            sys.exit(1)
+
+    krootfs_dir = options.rootfs_dir
+    if krootfs_dir is None:
+         krootfs_dir = {}
+         krootfs_dir['ROOTFS_DIR'] = rootfs_dir
+
+    rootfs_dir = rootfs_dir_to_args(krootfs_dir)
+
+    wic_create(args, wks_file, rootfs_dir, bootimg_dir, kernel_dir,
+               native_sysroot, scripts_path,
+               image_output_dir, options.debug, options.properties_file)
+exec(wic_original)
+

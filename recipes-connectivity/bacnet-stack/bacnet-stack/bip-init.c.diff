@@ -1,0 +1,15 @@
+diff --git a/ports/linux/bip-init.c b/ports/linux/bip-init.c
+index 508d670..1a81d44 100644
+--- a/ports/linux/bip-init.c
++++ b/ports/linux/bip-init.c
+@@ -41,6 +41,10 @@
+ /** @file linux/bip-init.c  Initializes BACnet/IP interface (Linux). */
+ 
+ bool BIP_Debug = false;
++int get_local_address_ioctl(
++    char *ifname,
++    struct in_addr *addr,
++    int request);
+ 
+ /* gets an IP address by name, where name can be a
+    string that is an IP address in dotted form, or

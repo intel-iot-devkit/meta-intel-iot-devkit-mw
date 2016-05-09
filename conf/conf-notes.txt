@@ -1,5 +1,0 @@
-Default targets are:
-    iot-devkit-image
-    iot-devkit-prof-image
-    iot-devkit-prof-dev-image
-    iot-devkit-spi-image

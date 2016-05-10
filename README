@@ -1,7 +1,10 @@
 meta-intel-iot-devkit-mw
-=======================
+========================
 
-This layer provides packages for the Intel IoT Developer Kit specific to the
+***Note*** This is currently a stubbed-out development layer.  As such, it
+is not currently in production and has no support.
+
+This layer *while* packages for the Intel IoT Developer Kit specific to the
 Intel Edison 2.
 
 Dependencies

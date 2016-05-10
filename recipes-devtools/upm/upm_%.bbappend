@@ -19,13 +19,4 @@ set (JAVA_JVM_LIBRARY ${JAVA_HOME}/jre/lib/amd64/libjvm.so CACHE FILEPATH \"path
 " >> ${WORKDIR}/toolchain.cmake
 }
 
-# include .jar files in /usr/lib/java for 64 bit builds
-FILES_${PN}_append = "${@' ${libdir}/../lib/java/*.jar' if '${MACHINE}' == 'intel-baytrail-64' else ''}"
-
-# include nodejs files in /usr/lib/node_modules for 64 bit builds
-FILES_${PN}_append = "${@' ${libdir}/../lib/node_modules/*' if '${MACHINE}' == 'intel-baytrail-64' else ''}"
-
 INSANE_SKIP_${PN} = "dev-so"
-INHIBIT_PACKAGE_DEBUG_SPLIT = "1"
-INHIBIT_PACKAGE_STRIP = "1"
-

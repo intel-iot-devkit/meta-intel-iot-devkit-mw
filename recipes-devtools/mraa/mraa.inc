@@ -15,8 +15,8 @@ FILES_${PN}-doc += "${datadir}/mraa/examples/"
 
 PACKAGECONFIG ??= "python nodejs java"
 PACKAGECONFIG[python] = "-DBUILDSWIGPYTHON=ON, -DBUILDSWIGPYTHON=OFF, swig-native python,"
-PACKAGECONFIG[nodejs] = "-DBUILDSWIGNODE=ON, -DBUILDSWIGNODE=OFF, swig-native nodejs,"
-PACKAGECONFIG[java] = "-DBUILDSWIGJAVA=ON, -DBUILDSWIGJAVA=OFF, swig-native openjdk-8-native,"
+PACKAGECONFIG[nodejs] = "-DBUILDSWIGNODE=ON, -DBUILDSWIGNODE=OFF, swig-native nodejs-native,"
+PACKAGECONFIG[java] = "-DBUILDSWIGJAVA=ON, -DBUILDSWIGJAVA=OFF, swig-native openjdk-8-native, java2-runtime"
 
 do_compile_prepend () {
   # when yocto builds in ${D} it does not have access to ../git/.git so git
@@ -58,7 +58,6 @@ FILES_${PN}-java = "${libdir}/libmraajava.so \
                     ${libdir}/.debug/libmraajava.so \
                    "
 
-RDEPENDS_${PN}-java += "java2-runtime"
 INSANE_SKIP_${PN}-java = "debug-files"
 
 export JAVA_HOME="${STAGING_DIR}/${BUILD_SYS}/usr/lib/jvm/openjdk-8-native"

@@ -9,6 +9,8 @@ S = "${WORKDIR}/git"
 
 inherit distutils-base pkgconfig python-dir cmake
 
+DEPENDS += "nodejs-native"
+
 EXTRA_OECMAKE_append = "-DINSTALLGPIOTOOL=ON -DPYTHON_SITE_DIR:FILEPATH=${PYTHON_SITEPACKAGES_DIR} -DBASE_LIB_INSTALL_DIR=${base_libdir} -DCMAKE_SKIP_RPATH=ON"
 
 FILES_${PN}-doc += "${datadir}/mraa/examples/"
